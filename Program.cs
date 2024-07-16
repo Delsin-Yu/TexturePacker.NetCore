@@ -108,23 +108,23 @@ namespace TexturePacker
     {
         public record struct Result(IReadOnlyList<Atlas> AtlasInfo, StringWriter Log, StringWriter ErrorLog);
         
-        public static async Task<Result> PackAsync(string sourceDir, string outputDir, string pattern,
+        public static async Task<Result> PackAsync(string[] imagePaths, string outputDir,
             int atlasSize, int padding, BestFitHeuristic fitHeuristic)
         {
             var logger = new StringWriter();
             var errorLogger = new StringWriter();
 
             var atlasList =
-                await ProcessAsync(sourceDir, pattern, atlasSize, padding, fitHeuristic, logger, errorLogger);
+                await ProcessAsync(imagePaths, atlasSize, padding, fitHeuristic, logger, errorLogger);
             await SaveAtlasesAsync(atlasList, outputDir);
             return new(atlasList, logger, errorLogger);
         }
 
-        private static async Task<IReadOnlyList<Atlas>> ProcessAsync(string sourceDir, string pattern, int atlasSize,
+        private static async Task<IReadOnlyList<Atlas>> ProcessAsync(string[] imagePaths, int atlasSize,
             int padding, BestFitHeuristic fitHeuristic, StringWriter logger, StringWriter errorLogger)
         {
             //1: scan for all the textures we need to pack
-            var textures = await ScanForTexturesAsync(atlasSize, sourceDir, pattern, logger, errorLogger);
+            var textures = await ScanForTexturesAsync(atlasSize, imagePaths, logger, errorLogger);
 
             //2: generate as many atlases as needed (with the latest one as small as possible)
             List<Atlas> atlases = [];
@@ -176,33 +176,30 @@ namespace TexturePacker
             }
         }
 
-        private static async Task<List<TextureInfo>> ScanForTexturesAsync(int atlasSize, string path, string wildcard,
+        private static async Task<List<TextureInfo>> ScanForTexturesAsync(int atlasSize, string[] imagePaths,
             StringWriter logger, StringWriter errorLogger)
         {
-            var di = new DirectoryInfo(path);
-            var files = di.GetFiles(wildcard, SearchOption.AllDirectories);
-
             var textures = new List<TextureInfo>();
 
-            foreach (var fi in files)
+            foreach (var path in imagePaths)
             {
-                var img = await Image.LoadAsync<Argb32>(fi.FullName);
+                var img = await Image.LoadAsync<Argb32>(path);
                 if (img.Width > atlasSize || img.Height > atlasSize)
                 {
-                    await errorLogger.WriteLineAsync(fi.FullName + " is too large to fix in the atlas. Skipping!");
+                    await errorLogger.WriteLineAsync(path + " is too large to fix in the atlas. Skipping!");
                     continue;
                 }
 
                 var ti = new TextureInfo
                 {
-                    Source = fi.FullName,
+                    Source = path,
                     Width = img.Width,
                     Height = img.Height
                 };
 
                 textures.Add(ti);
 
-                await logger.WriteLineAsync("Added " + fi.FullName);
+                await logger.WriteLineAsync("Added " + path);
             }
 
             return textures;
