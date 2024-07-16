@@ -1,20 +1,22 @@
 ﻿
-Microsoft Visual Studio Solution File, Format Version 11.00
-# Visual Studio 2010
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TexturePacker", "TexturePacker.csproj", "{33038608-0431-4B28-A59B-ABF7ABADD286}"
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TexturePacker", "TexturePacker.csproj", "{23ECC36C-97D1-4E73-9BDE-2018344A5E13}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|x86 = Debug|x86
-		Release|x86 = Release|x86
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{33038608-0431-4B28-A59B-ABF7ABADD286}.Debug|x86.ActiveCfg = Debug|x86
-		{33038608-0431-4B28-A59B-ABF7ABADD286}.Debug|x86.Build.0 = Debug|x86
-		{33038608-0431-4B28-A59B-ABF7ABADD286}.Release|x86.ActiveCfg = Release|x86
-		{33038608-0431-4B28-A59B-ABF7ABADD286}.Release|x86.Build.0 = Release|x86
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{23ECC36C-97D1-4E73-9BDE-2018344A5E13}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{23ECC36C-97D1-4E73-9BDE-2018344A5E13}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{23ECC36C-97D1-4E73-9BDE-2018344A5E13}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{23ECC36C-97D1-4E73-9BDE-2018344A5E13}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

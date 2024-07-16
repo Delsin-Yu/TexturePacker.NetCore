@@ -1,9 +1,8 @@
-﻿using System;
-using System.IO;
-using System.Drawing;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace TexturePacker
 {
@@ -15,17 +14,17 @@ namespace TexturePacker
         /// <summary>
         /// Path of the source texture on disk
         /// </summary>
-        public string Source;
-        
+        public required string Source { get; init; }
+
         /// <summary>
         /// Width in Pixels
         /// </summary>
-        public int Width;
-        
+        public int Width { get; init; }
+
         /// <summary>
         /// Height in Pixels
         /// </summary>
-        public int Height;
+        public int Height { get; init; }
     }
 
     /// <summary>
@@ -37,9 +36,9 @@ namespace TexturePacker
         /// Split Horizontally (textures are stacked up)
         /// </summary>
         Horizontal,
-        
+
         /// <summary>
-        /// Split verticaly (textures are side by side)
+        /// Split vertically (textures are side by side)
         /// </summary>
         Vertical,
     }
@@ -53,7 +52,7 @@ namespace TexturePacker
         /// 
         /// </summary>
         Area,
-        
+
         /// <summary>
         /// 
         /// </summary>
@@ -73,8 +72,8 @@ namespace TexturePacker
         /// <summary>
         /// Texture this node represents
         /// </summary>
-        public TextureInfo Texture;
-        
+        public TextureInfo? Texture;
+
         /// <summary>
         /// If this is an empty node, indicates how to split it when it will  be used
         /// </summary>
@@ -89,92 +88,55 @@ namespace TexturePacker
         /// <summary>
         /// Width in pixels
         /// </summary>
-        public int Width;
-        
+        public int Width { get; set; }
+
         /// <summary>
         /// Height in Pixel
         /// </summary>
-        public int Height;
+        public int Height { get; set; }
 
         /// <summary>
         /// List of the nodes in the Atlas. This will represent all the textures that are packed into it and all the remaining free space
         /// </summary>
-        public List<Node> Nodes;
+        public List<Node> Nodes { get; } = [];
     }
 
     /// <summary>
     /// Objects that performs the packing task. Takes a list of textures as input and generates a set of atlas textures/definition pairs
     /// </summary>
-    public class Packer
+    public class TexturePacker
     {
-        /// <summary>
-        /// List of all the textures that need to be packed
-        /// </summary>
-        public List<TextureInfo> SourceTextures;
-
-        /// <summary>
-        /// Stream that recieves all the info logged
-        /// </summary>
-        public StringWriter Log;
-
-        /// <summary>
-        /// Stream that recieves all the error info
-        /// </summary>
-        public StringWriter Error;
+        public record struct Result(IReadOnlyList<Atlas> AtlasInfo, StringWriter Log, StringWriter ErrorLog);
         
-        /// <summary>
-        /// Number of pixels that separate textures in the atlas
-        /// </summary>
-        public int Padding;
-        
-        /// <summary>
-        /// Size of the atlas in pixels. Represents one axis, as atlases are square
-        /// </summary>
-        public int AtlasSize;
-        
-        /// <summary>
-        /// Toggle for debug mode, resulting in debug atlasses to check the packing algorithm
-        /// </summary>
-        public bool DebugMode;
-        
-        /// <summary>
-        /// Which heuristic to use when doing the fit
-        /// </summary>
-        public BestFitHeuristic FitHeuristic;
-
-        /// <summary>
-        /// List of all the output atlases
-        /// </summary>
-        public List<Atlas> Atlasses;
-
-        public Packer()
+        public static async Task<Result> PackAsync(string sourceDir, string outputDir, string pattern,
+            int atlasSize, int padding, BestFitHeuristic fitHeuristic)
         {
-            SourceTextures = new List<TextureInfo>();
-            Log = new StringWriter();
-            Error = new StringWriter();
+            var logger = new StringWriter();
+            var errorLogger = new StringWriter();
+
+            var atlasList =
+                await ProcessAsync(sourceDir, pattern, atlasSize, padding, fitHeuristic, logger, errorLogger);
+            await SaveAtlasesAsync(atlasList, outputDir);
+            return new(atlasList, logger, errorLogger);
         }
 
-        public void Process(string _SourceDir, string _Pattern, int _AtlasSize, int _Padding, bool _DebugMode)
+        private static async Task<IReadOnlyList<Atlas>> ProcessAsync(string sourceDir, string pattern, int atlasSize,
+            int padding, BestFitHeuristic fitHeuristic, StringWriter logger, StringWriter errorLogger)
         {
-            Padding = _Padding;
-            AtlasSize = _AtlasSize;
-            DebugMode = _DebugMode;
-
             //1: scan for all the textures we need to pack
-            ScanForTextures(_SourceDir, _Pattern);
+            var textures = await ScanForTexturesAsync(atlasSize, sourceDir, pattern, logger, errorLogger);
 
-            List<TextureInfo> textures = new List<TextureInfo>();
-            textures = SourceTextures.ToList();
-
-            //2: generate as many atlasses as needed (with the latest one as small as possible)
-            Atlasses = new List<Atlas>();
+            //2: generate as many atlases as needed (with the latest one as small as possible)
+            List<Atlas> atlases = [];
             while (textures.Count > 0)
             {
-                Atlas atlas = new Atlas();
-                atlas.Width = _AtlasSize;
-                atlas.Height = _AtlasSize;
+                var atlas = new Atlas
+                {
+                    Width = atlasSize,
+                    Height = atlasSize
+                };
 
-                List<TextureInfo> leftovers = LayoutAtlas(textures, atlas);
+                var leftovers = LayoutAtlas(textures, atlas, padding, fitHeuristic);
 
                 if (leftovers.Count == 0)
                 {
@@ -183,381 +145,226 @@ namespace TexturePacker
                     {
                         atlas.Width /= 2;
                         atlas.Height /= 2;
-                        leftovers = LayoutAtlas(textures, atlas);
+                        leftovers = LayoutAtlas(textures, atlas, padding, fitHeuristic);
                     }
+
                     // we need to go 1 step larger as we found the first size that is to small
                     atlas.Width *= 2;
                     atlas.Height *= 2;
-                    leftovers = LayoutAtlas(textures, atlas);
+                    leftovers = LayoutAtlas(textures, atlas, padding, fitHeuristic);
                 }
 
-                Atlasses.Add(atlas);
+                atlases.Add(atlas);
 
                 textures = leftovers;
             }
+
+            return atlases;
         }
 
-        public void SaveAtlasses(string _Destination)
+        private static async Task SaveAtlasesAsync(IReadOnlyList<Atlas> atlasList, string destination)
         {
-            int atlasCount = 0;
-            string prefix = _Destination.Replace(Path.GetExtension(_Destination), "");
-
-            string descFile = _Destination;
-            StreamWriter tw = new StreamWriter(_Destination);
-            tw.WriteLine("source_tex, atlas_tex, u, v, scale_u, scale_v");
-
-            foreach (Atlas atlas in Atlasses)
+            var atlasCount = 0;
+            var prefix = destination.Replace(Path.GetExtension(destination), "");
+            var encoder = new PngEncoder();
+            foreach (var atlas in atlasList)
             {
-                string atlasName = String.Format(prefix + "{0:000}" + ".png", atlasCount);
-
-                //1: Save images
-                Image img = CreateAtlasImage(atlas);
-                img.Save(atlasName, System.Drawing.Imaging.ImageFormat.Png);
-
-                //2: save description in file
-                foreach (Node n in atlas.Nodes)
-                {
-                    if (n.Texture != null)
-                    {
-                        tw.Write(n.Texture.Source + ", ");
-                        tw.Write(atlasName + ", ");
-                        tw.Write(((float)n.Bounds.X / atlas.Width).ToString() + ", ");
-                        tw.Write(((float)n.Bounds.Y / atlas.Height).ToString() + ", ");
-                        tw.Write(((float)n.Bounds.Width / atlas.Width).ToString() + ", ");
-                        tw.WriteLine(((float)n.Bounds.Height / atlas.Height).ToString());
-                    }
-                }
-
+                var atlasName = string.Format(prefix + "{0:000}" + ".png", atlasCount);
+                var img = CreateAtlasImage(atlas);
+                await img.SaveAsync(atlasName, encoder);
                 ++atlasCount;
             }
-            tw.Close();
-
-            tw = new StreamWriter(prefix + ".log");
-            tw.WriteLine("--- LOG -------------------------------------------");
-            tw.WriteLine(Log.ToString());
-            tw.WriteLine("--- ERROR -----------------------------------------");
-            tw.WriteLine(Error.ToString());
-            tw.Close();
         }
 
-        private void ScanForTextures(string _Path, string _Wildcard)
+        private static async Task<List<TextureInfo>> ScanForTexturesAsync(int atlasSize, string path, string wildcard,
+            StringWriter logger, StringWriter errorLogger)
         {
-            DirectoryInfo di = new DirectoryInfo(_Path);
-            FileInfo[] files = di.GetFiles(_Wildcard, SearchOption.AllDirectories);
+            var di = new DirectoryInfo(path);
+            var files = di.GetFiles(wildcard, SearchOption.AllDirectories);
 
-            foreach (FileInfo fi in files)
+            var textures = new List<TextureInfo>();
+
+            foreach (var fi in files)
             {
-                Image img = Image.FromFile(fi.FullName);
-                if (img != null)
+                var img = await Image.LoadAsync<Argb32>(fi.FullName);
+                if (img.Width > atlasSize || img.Height > atlasSize)
                 {
-                    if (img.Width <= AtlasSize && img.Height <= AtlasSize)
-                    {
-                        TextureInfo ti = new TextureInfo();
-
-                        ti.Source = fi.FullName;
-                        ti.Width = img.Width;
-                        ti.Height = img.Height;
-
-                        SourceTextures.Add(ti);
-
-                        Log.WriteLine("Added " + fi.FullName);
-                    }
-                    else
-                    {
-                        Error.WriteLine(fi.FullName + " is too large to fix in the atlas. Skipping!");
-                    }
+                    await errorLogger.WriteLineAsync(fi.FullName + " is too large to fix in the atlas. Skipping!");
+                    continue;
                 }
+
+                var ti = new TextureInfo
+                {
+                    Source = fi.FullName,
+                    Width = img.Width,
+                    Height = img.Height
+                };
+
+                textures.Add(ti);
+
+                await logger.WriteLineAsync("Added " + fi.FullName);
             }
+
+            return textures;
         }
 
-        private void HorizontalSplit(Node _ToSplit, int _Width, int _Height, List<Node> _List)
+        private static void HorizontalSplit(Node toSplit, int width, int height, int padding, List<Node> list)
         {
-            Node n1 = new Node();
-            n1.Bounds.X = _ToSplit.Bounds.X + _Width + Padding;
-            n1.Bounds.Y = _ToSplit.Bounds.Y;
-            n1.Bounds.Width = _ToSplit.Bounds.Width - _Width - Padding;
-            n1.Bounds.Height = _Height;
+            var n1 = new Node();
+            n1.Bounds.X = toSplit.Bounds.X + width + padding;
+            n1.Bounds.Y = toSplit.Bounds.Y;
+            n1.Bounds.Width = toSplit.Bounds.Width - width - padding;
+            n1.Bounds.Height = height;
             n1.SplitType = SplitType.Vertical;
 
-            Node n2 = new Node();
-            n2.Bounds.X = _ToSplit.Bounds.X;
-            n2.Bounds.Y = _ToSplit.Bounds.Y + _Height + Padding;
-            n2.Bounds.Width = _ToSplit.Bounds.Width;
-            n2.Bounds.Height = _ToSplit.Bounds.Height - _Height - Padding;
+            var n2 = new Node();
+            n2.Bounds.X = toSplit.Bounds.X;
+            n2.Bounds.Y = toSplit.Bounds.Y + height + padding;
+            n2.Bounds.Width = toSplit.Bounds.Width;
+            n2.Bounds.Height = toSplit.Bounds.Height - height - padding;
             n2.SplitType = SplitType.Horizontal;
 
-            if (n1.Bounds.Width > 0 && n1.Bounds.Height > 0)
-                _List.Add(n1);
-            if (n2.Bounds.Width > 0 && n2.Bounds.Height > 0)
-                _List.Add(n2);
+            if (n1.Bounds is { Width: > 0, Height: > 0 })
+                list.Add(n1);
+            if (n2.Bounds is { Width: > 0, Height: > 0 })
+                list.Add(n2);
         }
 
-        private void VerticalSplit(Node _ToSplit, int _Width, int _Height, List<Node> _List)
+        private static void VerticalSplit(Node toSplit, int width, int height, int padding, List<Node> list)
         {
-            Node n1 = new Node();
-            n1.Bounds.X = _ToSplit.Bounds.X + _Width + Padding;
-            n1.Bounds.Y = _ToSplit.Bounds.Y;
-            n1.Bounds.Width = _ToSplit.Bounds.Width - _Width - Padding;
-            n1.Bounds.Height = _ToSplit.Bounds.Height;
+            var n1 = new Node();
+            n1.Bounds.X = toSplit.Bounds.X + width + padding;
+            n1.Bounds.Y = toSplit.Bounds.Y;
+            n1.Bounds.Width = toSplit.Bounds.Width - width - padding;
+            n1.Bounds.Height = toSplit.Bounds.Height;
             n1.SplitType = SplitType.Vertical;
 
-            Node n2 = new Node();
-            n2.Bounds.X = _ToSplit.Bounds.X;
-            n2.Bounds.Y = _ToSplit.Bounds.Y + _Height + Padding;
-            n2.Bounds.Width = _Width;
-            n2.Bounds.Height = _ToSplit.Bounds.Height - _Height - Padding;
+            var n2 = new Node();
+            n2.Bounds.X = toSplit.Bounds.X;
+            n2.Bounds.Y = toSplit.Bounds.Y + height + padding;
+            n2.Bounds.Width = width;
+            n2.Bounds.Height = toSplit.Bounds.Height - height - padding;
             n2.SplitType = SplitType.Horizontal;
 
-            if (n1.Bounds.Width > 0 && n1.Bounds.Height > 0)
-                _List.Add(n1);
-            if (n2.Bounds.Width > 0 && n2.Bounds.Height > 0)
-                _List.Add(n2);
+            if (n1.Bounds is { Width: > 0, Height: > 0 })
+                list.Add(n1);
+            if (n2.Bounds is { Width: > 0, Height: > 0 })
+                list.Add(n2);
         }
 
-        private TextureInfo FindBestFitForNode(Node _Node, List<TextureInfo> _Textures)
+        private static TextureInfo? FindBestFitForNode(Node node, List<TextureInfo> textures,
+            BestFitHeuristic fitHeuristic)
         {
-            TextureInfo bestFit = null;
+            TextureInfo? bestFit = null;
 
-            float nodeArea = _Node.Bounds.Width * _Node.Bounds.Height;
-            float maxCriteria = 0.0f;
+            float nodeArea = node.Bounds.Width * node.Bounds.Height;
+            var maxCriteria = 0.0f;
 
-            foreach (TextureInfo ti in _Textures)
+            foreach (var ti in textures)
             {
-                switch (FitHeuristic)
+                switch (fitHeuristic)
                 {
                     // Max of Width and Height ratios
                     case BestFitHeuristic.MaxOneAxis:
-                        if (ti.Width <= _Node.Bounds.Width && ti.Height <= _Node.Bounds.Height)
-                        {
-                            float wRatio = (float)ti.Width / (float)_Node.Bounds.Width;
-                            float hRatio = (float)ti.Height / (float)_Node.Bounds.Height;
-                            float ratio = wRatio > hRatio ? wRatio : hRatio;
-                            if (ratio > maxCriteria)
-                            {
-                                maxCriteria = ratio;
-                                bestFit = ti;
-                            }
-                        }
+                        if (ti.Width > node.Bounds.Width || ti.Height > node.Bounds.Height)
+                            break;
+
+                        var wRatio = ti.Width / (float)node.Bounds.Width;
+                        var hRatio = ti.Height / (float)node.Bounds.Height;
+                        var ratio = wRatio > hRatio ? wRatio : hRatio;
+
+                        if (!(ratio > maxCriteria))
+                            break;
+
+                        maxCriteria = ratio;
+                        bestFit = ti;
+
                         break;
 
                     // Maximize Area coverage
                     case BestFitHeuristic.Area:
 
-                        if (ti.Width <= _Node.Bounds.Width && ti.Height <= _Node.Bounds.Height)
-                        {
-                            float textureArea = ti.Width * ti.Height;
-                            float coverage = textureArea / nodeArea;
-                            if (coverage > maxCriteria)
-                            {
-                                maxCriteria = coverage;
-                                bestFit = ti;
-                            }
-                        }
+                        if (ti.Width > node.Bounds.Width || ti.Height > node.Bounds.Height)
+                            break;
+
+                        float textureArea = ti.Width * ti.Height;
+                        var coverage = textureArea / nodeArea;
+
+                        if (!(coverage > maxCriteria))
+                            break;
+
+                        maxCriteria = coverage;
+                        bestFit = ti;
+
                         break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(fitHeuristic), fitHeuristic, null);
                 }
             }
 
             return bestFit;
         }
 
-        private List<TextureInfo> LayoutAtlas(List<TextureInfo> _Textures, Atlas _Atlas)
+        private static List<TextureInfo> LayoutAtlas(List<TextureInfo> textureList, Atlas atlas, int padding,
+            BestFitHeuristic fitHeuristic)
         {
-            List<Node> freeList = new List<Node>();
-            List<TextureInfo> textures = new List<TextureInfo>();
+            var freeList = new List<Node>();
 
-            _Atlas.Nodes = new List<Node>();
-
-            textures = _Textures.ToList();
-
-            Node root = new Node();
-            root.Bounds.Size = new Size(_Atlas.Width, _Atlas.Height);
+            var root = new Node();
+            root.Bounds.Size = new Size(atlas.Width, atlas.Height);
             root.SplitType = SplitType.Horizontal;
 
             freeList.Add(root);
 
-            while (freeList.Count > 0 && textures.Count > 0)
+            while (freeList.Count > 0 && textureList.Count > 0)
             {
-                Node node = freeList[0];
+                var node = freeList[0];
                 freeList.RemoveAt(0);
 
-                TextureInfo bestFit = FindBestFitForNode(node, textures);
+                var bestFit = FindBestFitForNode(node, textureList, fitHeuristic);
                 if (bestFit != null)
                 {
                     if (node.SplitType == SplitType.Horizontal)
                     {
-                        HorizontalSplit(node, bestFit.Width, bestFit.Height, freeList);
+                        HorizontalSplit(node, bestFit.Width, bestFit.Height, padding, freeList);
                     }
                     else
                     {
-                        VerticalSplit(node, bestFit.Width, bestFit.Height, freeList);
+                        VerticalSplit(node, bestFit.Width, bestFit.Height, padding, freeList);
                     }
 
                     node.Texture = bestFit;
                     node.Bounds.Width = bestFit.Width;
                     node.Bounds.Height = bestFit.Height;
 
-                    textures.Remove(bestFit);
+                    textureList.Remove(bestFit);
                 }
 
-                _Atlas.Nodes.Add(node);
+                atlas.Nodes.Add(node);
             }
 
-            return textures;
+            return textureList;
         }
 
-        private Image CreateAtlasImage(Atlas _Atlas)
+        private static Image<Argb32> CreateAtlasImage(Atlas atlas)
         {
-            Image img = new Bitmap(_Atlas.Width, _Atlas.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            Graphics g = Graphics.FromImage(img);
+            var img = new Image<Argb32>(atlas.Width, atlas.Height);
 
-            if (DebugMode)
+            foreach (var node in atlas.Nodes)
             {
-                g.FillRectangle(Brushes.Green, new Rectangle(0, 0, _Atlas.Width, _Atlas.Height));
-            }
-
-            foreach (Node n in _Atlas.Nodes)
-            {
-                if (n.Texture != null)
+                var bounds = node.Bounds;
+                if (node.Texture != null)
                 {
-                    Image sourceImg = Image.FromFile(n.Texture.Source);
-                    g.DrawImage(sourceImg, n.Bounds);
-
-                    if (DebugMode)
-                    {
-                        string label = Path.GetFileNameWithoutExtension(n.Texture.Source);
-                        SizeF labelBox = g.MeasureString(label, SystemFonts.MenuFont, new SizeF(n.Bounds.Size));
-                        RectangleF rectBounds = new Rectangle(n.Bounds.Location, new Size((int)labelBox.Width, (int)labelBox.Height));
-                        g.FillRectangle(Brushes.Black, rectBounds);
-                        g.DrawString(label, SystemFonts.MenuFont, Brushes.White, rectBounds);
-                    }
+                    var sourceImg = Image.Load<Argb32>(node.Texture.Source);
+                    img.Mutate(context => { context.DrawImage(sourceImg, bounds, 1); });
                 }
                 else
                 {
-                    g.FillRectangle(Brushes.DarkMagenta, n.Bounds);
-
-                    if (DebugMode)
-                    {
-                        string label = n.Bounds.Width.ToString() + "x" + n.Bounds.Height.ToString();
-                        SizeF labelBox = g.MeasureString(label, SystemFonts.MenuFont, new SizeF(n.Bounds.Size));
-                        RectangleF rectBounds = new Rectangle(n.Bounds.Location, new Size((int)labelBox.Width, (int)labelBox.Height));
-                        g.FillRectangle(Brushes.Black, rectBounds);
-                        g.DrawString(label, SystemFonts.MenuFont, Brushes.White, rectBounds);
-                    }
+                    img.Mutate(context => { context.Fill(Color.DarkMagenta, bounds); });
                 }
             }
 
             return img;
-        }
-
-    }
-
-
-
-    class Program
-    {
-        static void DisplayInfo()
-        {
-            Console.WriteLine("  usage: TexturePacker -sp xxx -ft xxx -o xxx [-s xxx] [-b x] [-d]");
-            Console.WriteLine("            -sp | --sourcepath : folder to recursively scan for textures to pack");
-            Console.WriteLine("            -ft | --filetype   : types of textures to pack (*.png only for now)");
-            Console.WriteLine("            -o  | --output     : name of the atlas file to generate");
-            Console.WriteLine("            -s  | --size       : size of 1 side of the atlas file in pixels. Default = 1024");
-            Console.WriteLine("            -b  | --border     : nb of pixels between textures in the atlas. Default = 0");
-            Console.WriteLine("            -d  | --debug      : output debug info in the atlas");
-            Console.WriteLine("  ex: TexturePacker -sp C:\\Temp\\Textures -ft *.png -o C:\\Temp\atlas.txt -s 512 -b 2 --debug");
-        }
-
-        static void Main(string[] args)
-        {
-            Console.WriteLine("TexturePacker - Package rect/non pow 2 textures into square power of 2 atlas");
-
-            if (args.Length == 0)
-            {
-                DisplayInfo();
-                return;
-            }
-
-            List<string> prms = args.ToList();
-
-            string sourcePath = "";
-            string searchPattern = "";
-            string outName = "";
-            int textureSize = 1024;
-            int border = 0;
-            bool debug = false;
-
-            for (int ip = 0; ip < prms.Count; ++ip)
-            {
-                prms[ip] = prms[ip].ToLowerInvariant();
-
-                switch (prms[ip])
-                {
-                    case "-sp":
-                    case "--sourcepath":
-                        if (!prms[ip + 1].StartsWith("-"))
-                        {
-                            sourcePath = prms[ip + 1];
-                            ++ip;
-                        }
-                        break;
-
-                    case "-ft":
-                    case "--filetype":
-                        if (!prms[ip + 1].StartsWith("-"))
-                        {
-                            searchPattern = prms[ip + 1];
-                            ++ip;
-                        }
-                        break;
-
-                    case "-o":
-                    case "--output":
-                        if (!prms[ip + 1].StartsWith("-"))
-                        {
-                            outName = prms[ip + 1];
-                            ++ip;
-                        }
-                        break;
-
-                    case "-s":
-                    case "--size":
-                        if (!prms[ip + 1].StartsWith("-"))
-                        {
-                            textureSize = int.Parse(prms[ip + 1]);
-                            ++ip;
-                        }
-                        break;
-
-                    case "-b":
-                    case "--border":
-                        if (!prms[ip + 1].StartsWith("-"))
-                        {
-                            border = int.Parse(prms[ip + 1]);
-                            ++ip;
-                        }
-                        break;
-
-                    case "-d":
-                    case "--debug":
-                        debug = true;
-                        break;
-                }
-            }
-
-            if (sourcePath == "" || searchPattern == "" || outName == "")
-            {
-                DisplayInfo();
-                return;
-            }
-            else
-            {
-                Console.WriteLine("Processing, please wait");
-            }
-
-            Packer packer = new Packer();
-
-            packer.Process(sourcePath, searchPattern, textureSize, border, debug);
-            packer.SaveAtlasses(outName);
         }
     }
 }
