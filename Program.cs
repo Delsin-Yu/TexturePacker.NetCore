@@ -109,7 +109,7 @@ namespace TexturePacker
         public record struct Result(IReadOnlyList<Atlas> AtlasInfo, StringWriter Log, StringWriter ErrorLog);
         
         public static async Task<Result> PackAsync(string[] imagePaths, string outputDir,
-            int atlasSize, int padding, BestFitHeuristic fitHeuristic)
+            int atlasSize, int padding = 0, BestFitHeuristic fitHeuristic = BestFitHeuristic.Area)
         {
             var logger = new StringWriter();
             var errorLogger = new StringWriter();
