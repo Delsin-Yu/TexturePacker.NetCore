@@ -72,12 +72,12 @@ namespace TexturePacker
         /// <summary>
         /// Texture this node represents
         /// </summary>
-        public TextureInfo? Texture;
+        public TextureInfo? Texture { get; set; }
 
         /// <summary>
         /// If this is an empty node, indicates how to split it when it will  be used
         /// </summary>
-        public SplitType SplitType;
+        public SplitType SplitType { get; set; }
     }
 
     /// <summary>
@@ -169,7 +169,7 @@ namespace TexturePacker
             var encoder = new PngEncoder();
             foreach (var atlas in atlasList)
             {
-                var atlasName = string.Format(prefix + "{0:000}" + ".png", atlasCount);
+                var atlasName = $"{prefix}{atlasCount:000}.png";
                 var img = CreateAtlasImage(atlas);
                 await img.SaveAsync(atlasName, encoder);
                 ++atlasCount;
@@ -306,61 +306,66 @@ namespace TexturePacker
             BestFitHeuristic fitHeuristic)
         {
             var freeList = new List<Node>();
+            var textures = textureList.ToList();
 
             var root = new Node();
+            atlas.Nodes.Clear();
             root.Bounds.Size = new Size(atlas.Width, atlas.Height);
             root.SplitType = SplitType.Horizontal;
 
             freeList.Add(root);
 
-            while (freeList.Count > 0 && textureList.Count > 0)
+            while (freeList.Count > 0 && textures.Count > 0)
             {
                 var node = freeList[0];
                 freeList.RemoveAt(0);
 
-                var bestFit = FindBestFitForNode(node, textureList, fitHeuristic);
-                if (bestFit != null)
+                var bestFit = FindBestFitForNode(node, textures, fitHeuristic);
+                
+                if (bestFit == null) continue;
+                
+                if (node.SplitType == SplitType.Horizontal)
                 {
-                    if (node.SplitType == SplitType.Horizontal)
-                    {
-                        HorizontalSplit(node, bestFit.Width, bestFit.Height, padding, freeList);
-                    }
-                    else
-                    {
-                        VerticalSplit(node, bestFit.Width, bestFit.Height, padding, freeList);
-                    }
-
-                    node.Texture = bestFit;
-                    node.Bounds.Width = bestFit.Width;
-                    node.Bounds.Height = bestFit.Height;
-
-                    textureList.Remove(bestFit);
+                    HorizontalSplit(node, bestFit.Width, bestFit.Height, padding, freeList);
+                }
+                else
+                {
+                    VerticalSplit(node, bestFit.Width, bestFit.Height, padding, freeList);
                 }
 
+                node.Texture = bestFit;
+                node.Bounds.Width = bestFit.Width;
+                node.Bounds.Height = bestFit.Height;
+
+                textures.Remove(bestFit);
                 atlas.Nodes.Add(node);
             }
 
-            return textureList;
+            return textures;
         }
 
         private static Image<Argb32> CreateAtlasImage(Atlas atlas)
         {
             var img = new Image<Argb32>(atlas.Width, atlas.Height);
 
-            foreach (var node in atlas.Nodes)
+            img.Mutate(context =>
             {
-                var bounds = node.Bounds;
-                if (node.Texture != null)
+                foreach (var node in atlas.Nodes)
                 {
-                    var sourceImg = Image.Load<Argb32>(node.Texture.Source);
-                    img.Mutate(context => { context.DrawImage(sourceImg, bounds, 1); });
+                    var bounds = node.Bounds;
+                    if (node.Texture != null)
+                    {
+                        var sourceImg = Image.Load<Argb32>(node.Texture.Source);
+                        sourceImg.Mutate(sourceContext => sourceContext.Resize(bounds.Size));
+                        context.DrawImage(sourceImg, bounds.Location, 1);
+                    }
+                    else
+                    {
+                        context.Fill(Color.DarkMagenta, bounds);
+                    }
                 }
-                else
-                {
-                    img.Mutate(context => { context.Fill(Color.DarkMagenta, bounds); });
-                }
-            }
-
+            });
+            
             return img;
         }
     }
