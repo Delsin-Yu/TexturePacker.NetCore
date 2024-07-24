@@ -166,6 +166,8 @@ namespace TexturePacker
         {
             var atlasCount = 0;
             var prefix = destination.Replace(Path.GetExtension(destination), "");
+            var dir = Path.GetDirectoryName(destination)!;
+            Directory.CreateDirectory(dir);
             var encoder = new PngEncoder();
             foreach (var atlas in atlasList)
             {
