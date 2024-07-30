@@ -25,6 +25,11 @@ namespace TexturePacker
         /// Height in Pixels
         /// </summary>
         public int Height { get; init; }
+
+        /// <summary>
+        /// Alpha Paddings
+        /// </summary>
+        public required Rectangle Padding { get; init; }
     }
 
     /// <summary>
@@ -192,21 +197,156 @@ namespace TexturePacker
                     continue;
                 }
 
+                CalculateAlphaPadding(
+                    img,
+                    out var alphaBounds,
+                    out var reducedWidth,
+                    out var reducedHeight
+                );
+
+                if (reducedHeight == 0)
+                {
+                    reducedHeight++;
+                    alphaBounds.Height--;
+                }
+
+                if (reducedWidth == 0)
+                {
+                    reducedWidth++;
+                    alphaBounds.Width--;
+                }
+                
                 var ti = new TextureInfo
                 {
                     Source = path,
-                    Width = img.Width,
-                    Height = img.Height
+                    Width = reducedWidth,
+                    Height = reducedHeight,
+                    Padding = alphaBounds,
                 };
 
                 textures.Add(ti);
 
                 await logger.WriteLineAsync("Added " + path);
             }
-
+            
             return textures;
         }
 
+        private static void CalculateAlphaPadding(
+            Image<Argb32> image,
+            out Rectangle alphaBounds,
+            out int reducedWidth,
+            out int reducedHeight)
+        {
+            var map = new bool[image.Width, image.Height];
+            
+            image.ProcessPixelRows(
+                accessor =>
+                {
+                    for (var y = 0; y < image.Height; y++)
+                    {
+                        var rowSpan = accessor.GetRowSpan(y);
+                        for (var x = 0; x < image.Width; x++)
+                        {
+                            var pixel = rowSpan[x];
+                            map[x, y] = pixel.A != 0;
+                        }
+                    } 
+                }
+            );
+
+            CalculateAlphaPaddingImpl(map, out var left, out var right, out var top, out var bottom);
+            
+            alphaBounds = Rectangle.FromLTRB(left, top, right, bottom);
+
+            reducedWidth = image.Width - left - right;
+            reducedHeight = image.Height - top - bottom;
+        }
+
+        private static void CalculateAlphaPaddingImpl(
+            bool[,] image,
+            out int left,
+            out int right,
+            out int top,
+            out int bottom)
+        {
+            var width = image.GetLength(0);
+            var height = image.GetLength(1);
+            
+            left = 0;
+            right = 0;
+            top = 0;
+            bottom = 0;
+            
+            for (var y = height - 1; y >= 0; y--)
+            {
+                var isTransparent = true;
+                
+                for (var x = 0; x < width; x++)
+                {
+                    if (!image[x, y]) continue;
+                    isTransparent = false;
+                    break;
+                }
+
+                if (!isTransparent) break;
+                bottom++;
+            }
+
+            for (var y = 0; y < height; y++)
+            {
+                var isTransparent = true;
+                
+                for (var x = 0; x < width; x++)
+                {
+                    if (!image[x, y]) continue;
+                    isTransparent = false;
+                    break;
+                }
+
+                if (!isTransparent) break;
+                top++;
+            }
+
+            for (var x = width - 1; x >= 0; x--)
+            {
+                var isTransparent = true;
+
+                for (var y = 0; y < height; y++)
+                {
+                    if (!image[x, y]) continue;
+                    isTransparent = false;
+                    break;
+                }
+                
+                if (!isTransparent) break;
+                right++;
+            }
+
+            for (var x = 0; x < width; x++)
+            {
+                var isTransparent = true;
+                
+                
+                for (var y = 0; y < height; y++)
+                {
+                    if (!image[x, y]) continue;
+                    isTransparent = false;
+                    break;
+                }
+
+                if (!isTransparent) break;
+                left++;
+            }
+
+            if (left + right <= width) return;
+            
+            left = width / 2;
+            right = width - left;
+            top = height / 2;
+            bottom = height - top;
+        }
+        
         private static void HorizontalSplit(Node toSplit, int width, int height, int padding, List<Node> list)
         {
             var n1 = new Node();
@@ -358,7 +498,18 @@ namespace TexturePacker
                     if (node.Texture != null)
                     {
                         var sourceImg = Image.Load<Argb32>(node.Texture.Source);
-                        sourceImg.Mutate(sourceContext => sourceContext.Resize(bounds.Size));
+                        sourceImg.Mutate(sourceContext =>
+                        {
+                            var imageRectangle = sourceImg.Bounds;
+                            var texturePadding = node.Texture.Padding;
+                            var cropRectangle = Rectangle.FromLTRB(
+                                imageRectangle.Left + texturePadding.Left,
+                                imageRectangle.Top + texturePadding.Top,
+                                imageRectangle.Right - texturePadding.Right,
+                                imageRectangle.Bottom - texturePadding.Bottom
+                            );
+                            sourceContext.Crop(cropRectangle);
+                        });
                         context.DrawImage(sourceImg, bounds.Location, 1);
                     }
                     else
